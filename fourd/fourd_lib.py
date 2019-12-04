@@ -31,7 +31,8 @@ FOURD_DATA_TYPES= {
     9:"VK_DURATION",
     10:"VK_STRING",
     18:"VK_BLOB",
-    12:"VK_IMAGE"}
+    12:"VK_IMAGE",
+    21:"VK_BLOB",}
 
 RESULT_SET='Result-Set'
 UPDATE_COUNT='Update-Count'
@@ -40,7 +41,7 @@ OK='OK'
 fourD_str_types = {
     "VK_BOOLEAN":bool,
     "VK_BYTE":str,
-    "VK_WORD":str,
+    "VK_WORD":int,
     "VK_LONG":int,
     "VK_LONG8":int,
     "VK_REAL":float,
@@ -478,6 +479,9 @@ class FourDResponse:
 
     def deserialize_VK_LONG(self):
         return struct.unpack('<l', self._recv(4))[0]
+
+    def deserialize_VK_WORD(self):
+        return struct.unpack('<h', self._recv(2))[0]
 
     def deserialize_VK_LONG8(self):
         return struct.unpack('<q', self._recv(8))[0]
