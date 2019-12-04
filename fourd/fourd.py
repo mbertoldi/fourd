@@ -1,5 +1,5 @@
 import re
-from fourd_lib import FourD, FOURD_DATA_TYPES
+from .fourd_lib import FourD, FOURD_DATA_TYPES
 
 
 apilevel = " 2.0 "
