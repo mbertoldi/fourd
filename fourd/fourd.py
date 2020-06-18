@@ -1,6 +1,6 @@
 import re
-from .fourd_lib import FourD, FOURD_DATA_TYPES
-
+from .lib import FourD, FOURD_DATA_TYPES
+from .exceptions import *
 
 apilevel = " 2.0 "
 threadsafety = 0 
@@ -10,36 +10,6 @@ paramstyle = "pyformat"
 PERCENT_PATTERN = re.compile(r'%\((\w+)\)s')
 COLON_PATTERN = re.compile(r':(\w+)')
 FORMAT_PATTERN = re.compile(r'%[A-Za-z]')
-
-class Warning(Exception):
-    pass
-
-class Error(Exception):
-    pass
-
-class InterfaceError(Error):
-    pass
-
-class DatabaseError(Error):
-    pass
-
-class DataError(DatabaseError):
-    pass
-
-class OperationalError(DatabaseError):
-    pass
-
-class IntegrityError(DatabaseError):
-    pass
-
-class InternalError(DatabaseError):
-    pass
-
-class ProgrammingError(DatabaseError):
-    pass
-
-class NotSupportedError(DatabaseError):
-    pass
 
 
 class FourD_cursor(object):

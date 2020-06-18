@@ -4,6 +4,7 @@ from collections import namedtuple, defaultdict, deque
 from datetime import datetime, time
 import logging
 import struct
+from .exceptions import *
 log = logging.getLogger('fourd')
 log.setLevel(logging.DEBUG)
 
@@ -32,6 +33,7 @@ FOURD_DATA_TYPES= {
     10:"VK_STRING",
     18:"VK_BLOB",
     12:"VK_IMAGE",
+    14:"VK_STRING",
     21:"VK_BLOB",}
 
 RESULT_SET='Result-Set'
@@ -50,6 +52,7 @@ fourD_str_types = {
     "VK_TIME":datetime,
     "VK_DURATION":time,
     "VK_STRING":str,
+    "VK_TEXT":str,
     "VK_BLOB":bytes,
     "VK_IMAGE":bytes,
     "VK_UNKNOW":None
@@ -68,32 +71,10 @@ fourD_types_str = defaultdict(lambda:"VK_STRING",{
 })
 
 class FourDColumn:
-    __slots__=('name', 'dtype','pytype', 'updatable')
+    __slots__=('name','internal_name', 'dtype','pytype', 'updatable')
     def __init__(self, *args, **kwargs):
         for key in self.__slots__:
             setattr(self,key,kwargs.get(key))
-
-class FourDException(Exception):
-    """Standard 4D Exception"""
-    caption = """!!Error code {code} (component code {component_code}) : {description}."""
-    localizer = None
-    
-    def __init__(self, description=None, code=None, component_code=None, **kwargs):
-        self.description = description
-        if isinstance(code,bytes):
-            code = code.decode()
-        if isinstance(component_code,bytes):
-            component_code = component_code.decode()
-        if isinstance(description,bytes):
-            description = description.decode()
-        self.code = code
-        self.component_code = component_code
-        self.description = description
-        
-    def __str__(self):
-        caption_args = dict(code=self.code, 
-            description=self.description, component_code=self.component_code)
-        return self.caption.format(**caption_args)
 
 class FourDCommand:
     cmd_id = 0
@@ -234,13 +215,13 @@ class FourDPrepareStatementPlain(FourDBaseStatement):
     cmd_params = ['STATEMENT', 'PARAMETER-TYPES']
 
 class FourDExecuteStatement(FourDBaseStatement):
-    cmd_id = 3
+    cmd_id = 6
     cmd_txt = 'EXECUTE-STATEMENT'
     cmd_params = ['STATEMENT-BASE64','PARAMETER-TYPES','FIRST-PAGE-SIZE',
         'OUTPUT-MODE','FULL-ERROR-STACK']
 
 class FourDExecuteStatementPlain(FourDBaseStatement):
-    cmd_id = 3
+    cmd_id = 6
     cmd_txt = 'EXECUTE-STATEMENT'
     cmd_params = ['STATEMENT','PARAMETER-TYPES','FIRST-PAGE-SIZE',
         'OUTPUT-MODE','FULL-ERROR-STACK']
@@ -258,17 +239,23 @@ class FourDCloseStatement(FourDCommand):
 
 
 class FourDResponse:
-    def __init__(self, connection=None):
+    def __init__(self, command=None,connection=None):
         self.connection = connection
         self.socket = connection.socket
+        self.command = command
         self.headers = {}
         self.read_headers()
         if not self.OK:
             raise self.exception
         self.row_number = None
-        if self.is_result_set:
-            self.row_count_received = 0
-            self.row_number = 0
+        #if self.is_result_set:
+        self.row_count_received = 0
+        self.row_number = 0
+        if isinstance(self.command, FourDExecuteStatement):
+            #print('_initialize')
+            self._initialize()
+        #elif self.is_update_count:
+        #    self._update_count = self._read_update_count()
 
 
     def dis__del__(self):
@@ -294,8 +281,12 @@ class FourDResponse:
             if header_bytes.endswith(b'\r\n\r\n'):
                 header_found = True
                 break
-            data = self._recv(1)
+            try:
+                data = self._recv(1)
+            except:
+                data = None
         if not header_found:
+            print(header_bytes)
             raise Exception("Error: Header-end not found\n")
         return header_bytes
 
@@ -338,8 +329,9 @@ class FourDResponse:
     def row_count(self):
         if self.is_result_set:
             return int(self.headers.get('Row-Count',0))
-        elif self.is_update_count:
-            return self.update_count
+        return 0
+#        elif self.is_update_count:
+#            return self.update_count
 
     @property
     def update_count(self):
@@ -349,7 +341,6 @@ class FourDResponse:
 
     def _read_update_count(self):
         if self.is_update_count:
-            self._recv(1)
             return self.deserialize_VK_LONG8()
 
     @property
@@ -369,36 +360,45 @@ class FourDResponse:
         
     def _read_columns(self):
         columns = []
-        if not self.is_result_set:
-            return 
+        #if not self.is_result_set:
+        #    return 
         n_columns = int(self.headers.get('Column-Count', 0))
         column_names = self.headers.get('Column-Aliases', '')
         column_names = column_names.lstrip('[').rstrip(']').split('] [')
         column_types = self.headers.get('Column-Types', '').split()
         column_updatability = self.headers.get('Column-Updateability','').split()
-        
+        if not column_updatability:
+            column_updatability = list('N'*len(column_names))
+        internal_names = []
         for i in range(n_columns):
             column_name = column_names[i]
             column_type = column_types[i]
             column_updatable = column_updatability[i] == 'Y'
             pytype = fourD_str_types.get(column_type)
-            columns.append(FourDColumn(name=column_name, dtype=column_type,
+            internal_name = column_name.replace(' ','_').lower()
+            internal_names.append(internal_name)
+            columns.append(FourDColumn(name=column_name, 
+                internal_name=internal_name, dtype=column_type,
                 updatable=column_updatable, pytype=pytype))
-        self._row_factory = namedtuple('row', column_names)
+        self._row_factory = namedtuple('row', internal_names)
         return columns
 
     def _initialize(self):
         if self.is_result_set:
             self._rows_cache
-        elif self.is_update_count:
+        
+        if self.is_update_count:
             self.update_count
+            #print('387',self.update_count)
 
     @property
     def _rows_cache(self):
         if not hasattr(self, '_rows_deque'): # cache the initial rows
             self._rows_deque = deque()
             while self.row_count_received<self.initial_row_count_sent:
-                self._rows_deque.append(self._read_row())
+                _row = self._read_row()
+                if _row:
+                    self._rows_deque.append(_row)
         return self._rows_deque
             
     def _read_row(self):
@@ -409,21 +409,29 @@ class FourDResponse:
             row_id = self.deserialize_VK_LONG()
         row_values = {}
         value=None
-        for column in self.columns:
-            status = self._recv(1)
-            try:
-                status = int(status)
-            except:
-                raise Exception('Error in reading status byte')
-            if status == 0:
-                value = None
-            elif status == 1:
-                value = self._read_value(column)
-            elif status == 2:
-                error_code =  self.deserialize_VK_LONG8()
-                raise Exception("Error code: {:d}".format(error_code))
-            row_values[column.name]=value
-        row = self._row_factory(**row_values)
+        try:
+            for column in self.columns:
+                status = self._recv(1)
+                if status == b'\x00':
+                    status = 0
+                try:
+                    status = int(status)
+                except:
+                    raise Exception('Error in reading status byte')
+                if status == 0:
+                    value = None
+                elif status == 1:
+                    value = self._read_value(column)
+                elif status == 2:
+                    error_code =  self.deserialize_VK_LONG8()
+                    raise Exception("Error code: {:d}".format(error_code))
+                row_values[column.internal_name]=value
+            row = self._row_factory(**row_values)
+        except:
+            print(row_values)
+            print(column.internal_name)
+            raise
+        #print(row)
         return row
         
     def rows(self):
@@ -471,8 +479,10 @@ class FourDResponse:
         deserializer = getattr(self,'deserialize_{}'.format(dtype))
         return deserializer()
 
-    def _recv(self, to_receive):
-        return self.socket.recv(to_receive,socket.MSG_WAITALL)       
+    def _recv(self, to_receive, not_full=None):
+        r =  self.socket.recv(to_receive,socket.MSG_WAITALL)
+        #print(r)
+        return r
 
     def deserialize_VK_BOOLEAN(self):
         return bool(struct.unpack('<H', self._recv(2))[0])
@@ -484,7 +494,9 @@ class FourDResponse:
         return struct.unpack('<h', self._recv(2))[0]
 
     def deserialize_VK_LONG8(self):
-        return struct.unpack('<q', self._recv(8))[0]
+        read_bytes = self._recv(8)
+        #print(read_bytes)
+        return struct.unpack('<q', read_bytes)[0]
 
     def deserialize_VK_REAL(self):
         return struct.unpack('<d', self._recv(8))[0]
@@ -517,6 +529,14 @@ class FourDResponse:
 
     def deserialize_VK_STRING(self):
         str_len= -struct.unpack('<l',self._recv(4))[0]
+        str_len *= 2 # UTF-16LE Strings use 2 bytes per character
+        encoded_value=self._recv(str_len)
+        return encoded_value.decode('UTF-16LE').encode().decode()
+        
+        
+    def deserialize_VK_TEXT(self):
+        str_len= -struct.unpack('<l',self._recv(4))[0]
+        #print(str_len)
         str_len *= 2 # UTF-16LE Strings use 2 bytes per character
         encoded_value=self._recv(str_len)
         return encoded_value.decode('UTF-16LE').encode().decode()
@@ -554,7 +574,7 @@ class FourDResponse:
         code = self.headers.get('Error-Code')
         component_code = self.headers.get('Error-Component-Code')
         description = self.headers.get('Error-Description')
-        return FourDException(code=code, component_code=component_code, description=description)
+        return ProgrammingError(code=code, component_code=component_code, description=description)
 
     @property
     def statement_id(self):
@@ -569,7 +589,7 @@ class FourDFetchResponse(FourDResponse):
 
 class FourD:
     def __init__(self, host=None, user=None, password=None, 
-            database=None, port=None, res_size=None, reply_64=True):
+            database=None, port=None, res_size=None, reply_64=False):
         self.host=host
         self.user=user
         self.password=password
@@ -591,10 +611,11 @@ class FourD:
         self.dblogin()
         self.connected=True
 
-    def fourd_send(self, bytes_value, response_factory=None):
-        self._socket_send(bytes_value)
+    def fourd_send(self, command, response_factory=None):
+        self._socket_send(command)
         response_factory = response_factory or FourDResponse
-        return FourDResponse(self)
+        response = FourDResponse(command=command, connection=self)
+        return response
 
     def _socket_send(self, bytes_value):
         if not isinstance(bytes_value, bytes):
