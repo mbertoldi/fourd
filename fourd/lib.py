@@ -607,7 +607,10 @@ class FourD:
     def connect(self):
         if self.connected:
             return
-        self.socket = socket.create_connection((self.host,self.port), 15)
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.settimeout(15)
+        self.socket.setblocking(True)
+        self.socket.connect((self.host, self.port))
         self.dblogin()
         self.connected=True
 
