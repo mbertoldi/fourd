@@ -545,6 +545,10 @@ class FourDResponse:
         blob_len = struct.unpack('<l',self._recv(4))[0]
         return self._recv(blob_len)
 
+    def deserialize_VK_IMAGE(self):
+        blob_len = struct.unpack('<l',self._recv(4))[0]
+        return self._recv(blob_len)
+
     def deserialize_VK_UNKNOW(self):
         pass
 
